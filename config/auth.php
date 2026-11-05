@@ -12,6 +12,22 @@ function require_login() {
     }
 }
 
+function require_student()
+{
+    require_login();
+
+    if ($_SESSION['role'] !== 'student') {
+        http_response_code(403);
+
+        echo json_encode([
+            'success' => false,
+            'message' => 'Access denied.'
+        ]);
+
+        exit();
+    }
+}
+
 function require_staff(){
     require_login();
     if ($_SESSION['role'] !== 'staff') {

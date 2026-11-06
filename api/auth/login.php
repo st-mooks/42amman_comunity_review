@@ -1,6 +1,8 @@
+
 <?php
-require_once '../../config/session.php';
-require_once '../../config/db.php';
+
+require_once __DIR__ . '/../../config/session.php';
+require_once __DIR__ . '/../../config/db.php';
 
 header('Content-Type: application/json');
 
@@ -27,6 +29,16 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 // Read JSON input
 $data = json_decode(file_get_contents('php://input'), true);
 
+if (!is_array($data)) {
+    http_response_code(400);
+    echo json_encode([
+        'success' => false,
+        'message' => 'Invalid JSON data.'
+    ]);
+    exit();
+}
+
+// Retrieve input
 $identifier = trim($data['username'] ?? '');
 $password = $data['password'] ?? '';
 
@@ -40,47 +52,59 @@ if (empty($identifier) || empty($password)) {
     exit();
 }
 
-// Fetch user
-$stmt = $pdo->prepare(
-    "SELECT id, username, email, password, role, status
-    FROM users
-    WHERE username = :username OR email = :email"
-);
+try {
+    // Fetch user
+    $stmt = $pdo->prepare(
+        "SELECT id, username, email, password_hash, role, status
+        FROM users
+        WHERE username = :identifier OR email = :identifier"
+    );
 
-$stmt->execute([
-    ':username' => $identifier,
-    ':email' => $identifier
-]);
+    $stmt->execute([
+        ':identifier' => $identifier
+    ]);
 
-$user = $stmt->fetch(PDO::FETCH_ASSOC);
+    $user = $stmt->fetch(PDO::FETCH_ASSOC);
 
-// Verify credentials
-if (
-    $user &&
-    $user['status'] === 'active' &&
-    password_verify($password, $user['password'])
-) {
-    session_regenerate_id(true);
+    // Verify credentials
+    if (
+        $user &&
+        $user['status'] === 'active' &&
+        password_verify($password, $user['password_hash'])
+    ) {
+        // Create session
+        session_regenerate_id(true);
 
-    $_SESSION['user_id'] = $user['id'];
-    $_SESSION['role'] = $user['role'];
-    $_SESSION['username'] = $user['username'];
+        $_SESSION['user_id'] = $user['id'];
+        $_SESSION['role'] = $user['role'];
+        $_SESSION['username'] = $user['username'];
 
-    http_response_code(200);
+        http_response_code(200);
+        echo json_encode([
+            'success' => true,
+            'message' => 'Login successful.',
+            'role' => $user['role']
+        ]);
+        exit();
+    }
+
+    // Invalid credentials
+    http_response_code(401);
     echo json_encode([
-        'success' => true,
-        'message' => 'Login successful.',
-        'role' => $user['role']
+        'success' => false,
+        'message' => 'Invalid username or password.'
+    ]);
+    exit();
+
+} catch (PDOException $e) {
+    error_log($e->getMessage());
+
+    http_response_code(500);
+    echo json_encode([
+        'success' => false,
+        'message' => 'Something went wrong. Please try again.'
     ]);
     exit();
 }
-
-// Invalid credentials
-http_response_code(401);
-echo json_encode([
-    'success' => false,
-    'message' => 'Invalid username or password.'
-]);
-exit();
 
 ?>

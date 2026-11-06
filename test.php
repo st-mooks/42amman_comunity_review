@@ -1,21 +1,18 @@
-
 <?php
 
-require_once 'validator/register_val.php';
+require_once 'config/db.php';
 
-$errors = validate_register_input(
-    "Dana",
-    "Farhan",
-    "123456",
-    "dana123",
-    "dana@example.com",
-    "Dana@12345",
-    "Dana@12345"
-);
+try {
+    $stmt = $pdo->query("SHOW TABLES");
+    $tables = $stmt->fetchAll(PDO::FETCH_COLUMN);
 
-if (empty($errors)) {
-    echo "Validation passed!";
-} else {
-    print_r($errors);
+    echo "Database connected successfully!<br>";
+
+    foreach ($tables as $table) {
+        echo $table . "<br>";
+    }
+
+} catch (PDOException $e) {
+    echo "Database query failed: " . $e->getMessage();
 }
 ?>

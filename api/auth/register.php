@@ -1,8 +1,9 @@
+
 <?php
 
-require_once '../../config/session.php';
-require_once '../../config/db.php';
-require_once '../../validator/register_val.php';
+require_once __DIR__ . '/../../config/session.php';
+require_once __DIR__ . '/../../config/db.php';
+require_once __DIR__ . '/../../validator/register_val.php';
 
 header('Content-Type: application/json');
 
@@ -16,12 +17,30 @@ if (isset($_SESSION['user_id'])) {
     exit();
 }
 
+// Check request method
+if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+    http_response_code(405);
+    echo json_encode([
+        'success' => false,
+        'message' => 'Method not allowed.'
+    ]);
+    exit();
+}
+
 // Receive JSON data
 $data = json_decode(file_get_contents('php://input'), true);
 
+if (!is_array($data)) {
+    http_response_code(400);
+    echo json_encode([
+        'success' => false,
+        'message' => 'Invalid JSON data.'
+    ]);
+    exit();
+}
+
 // Retrieve input
-$first_name = trim($data['first_name'] ?? '');
-$last_name = trim($data['last_name'] ?? '');
+$full_name = trim($data['full_name'] ?? '');
 $username = trim($data['username'] ?? '');
 $email = trim($data['email'] ?? '');
 $password = $data['password'] ?? '';
@@ -29,8 +48,7 @@ $confirm_password = $data['confirm_password'] ?? '';
 
 // Validate input
 $errors = validate_register_input(
-    $first_name,
-    $last_name,
+    $full_name,
     $username,
     $email,
     $password,
@@ -40,7 +58,6 @@ $errors = validate_register_input(
 // Return validation errors
 if (!empty($errors)) {
     http_response_code(400);
-
     echo json_encode([
         'success' => false,
         'errors' => $errors
@@ -51,22 +68,26 @@ if (!empty($errors)) {
 // Hash password
 $password_hash = password_hash($password, PASSWORD_DEFAULT);
 
+$role = 'student';
+$status = 'active';
 try {
-    $stmt = $pdo->prepare(
-        "INSERT INTO users
-        (first_name, last_name, username, email, password)
-        VALUES
-        (:first_name, :last_name, :username, :email, :password)"
-    );
+   $stmt = $pdo->prepare(
+    "INSERT INTO users
+    (full_name, username, email, password_hash, role, status)
+    VALUES
+    (:full_name, :username, :email, :password_hash, :role, :status)"
+); 
 
     $stmt->execute([
-        ':first_name' => $first_name,
-        ':last_name' => $last_name,
-        ':username' => $username,
-        ':email' => $email,
-        ':password' => $password_hash
-    ]);
+    ':full_name' => $full_name,
+    ':username' => $username,
+    ':email' => $email,
+    ':password_hash' => $password_hash,
+    ':role' => $role,
+    ':status' => $status
+]);
 
+   
     http_response_code(201);
 
     echo json_encode([
@@ -79,23 +100,19 @@ try {
 
     if ($e->getCode() == '23000') {
         http_response_code(409);
-
         echo json_encode([
             'success' => false,
-            'message' => 'Username, email, or student ID already exists.'
+            'message' => 'Username or email already exists.'
         ]);
         exit();
     }
 
-    // Log unexpected database errors
     error_log($e->getMessage());
 
     http_response_code(500);
-
     echo json_encode([
         'success' => false,
         'message' => 'Something went wrong. Please try again.'
     ]);
     exit();
 }
-?>

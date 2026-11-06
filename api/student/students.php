@@ -21,12 +21,12 @@ $current_user_id = $_SESSION['user_id'];
 
 try {
        $stmt = $pdo->prepare(
-        "SELECT id, first_name, last_name
+        "SELECT id, full_name
         FROM users
         WHERE role = 'student'
         AND status = 'active'
         AND id != :current_user_id
-        ORDER BY first_name, last_name"
+        ORDER BY full_name"
     );
 
     $stmt->execute([

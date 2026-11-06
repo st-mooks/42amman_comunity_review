@@ -20,7 +20,7 @@ if ($_SERVER['REQUEST_METHOD'] !== 'GET') {
 $current_user_id = $_SESSION['user_id'];
 
 try {
-    $stmt = $pdo->prepare(
+       $stmt = $pdo->prepare(
         "SELECT id, first_name, last_name
         FROM users
         WHERE role = 'student'

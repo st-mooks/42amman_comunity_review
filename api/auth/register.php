@@ -1,8 +1,8 @@
 <?php
 
-require_once 'config/session.php';
-require_once 'config/db.php';
-require_once 'validator/register_val.php';
+require_once '../../config/session.php';
+require_once '../../config/db.php';
+require_once '../../validator/register_val.php';
 
 header('Content-Type: application/json');
 

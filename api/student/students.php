@@ -1,11 +1,10 @@
+
 <?php
 
-require_once '../../config/auth.php';
-require_once '../../config/db.php';
+require_once __DIR__ . '/../../config/auth.php';
+require_once __DIR__ . '/../../config/db.php';
 
 header('Content-Type: application/json');
-
-require_student();
 
 // Allow GET requests only
 if ($_SERVER['REQUEST_METHOD'] !== 'GET') {
@@ -17,10 +16,14 @@ if ($_SERVER['REQUEST_METHOD'] !== 'GET') {
     exit();
 }
 
+// Only students can access this endpoint
+require_student();
+
 $current_user_id = $_SESSION['user_id'];
 
 try {
-       $stmt = $pdo->prepare(
+
+    $stmt = $pdo->prepare(
         "SELECT id, full_name
         FROM users
         WHERE role = 'student'
@@ -35,12 +38,14 @@ try {
 
     $students = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
+    http_response_code(200);
     echo json_encode([
         'success' => true,
         'students' => $students
     ]);
 
 } catch (PDOException $e) {
+
     error_log($e->getMessage());
 
     http_response_code(500);
@@ -51,4 +56,5 @@ try {
 }
 
 exit();
+
 ?>

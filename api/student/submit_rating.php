@@ -1,12 +1,12 @@
+
 <?php
 
-require_once '../../config/auth.php';
-require_once '../../config/db.php';
+require_once __DIR__ . '/../../config/auth.php';
+require_once __DIR__ . '/../../config/db.php';
 
 header('Content-Type: application/json');
 
-require_student();
-
+// Allow POST requests only
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     http_response_code(405);
     echo json_encode([
@@ -16,39 +16,75 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     exit();
 }
 
-// Read the JSON request body
+// Only students can submit ratings
+require_student();
+
+// Read JSON request
 $data = json_decode(file_get_contents('php://input'), true);
 
+// Validate required fields
 if (
+    !is_array($data) ||
     !isset($data['rated_student_id']) ||
     !isset($data['window_id']) ||
-    !isset($data['rating_value'])
+    !isset($data['stars']) ||
+    !isset($data['label_ids']) ||
+    !is_array($data['label_ids'])
 ) {
     http_response_code(400);
     echo json_encode([
         'success' => false,
-        'message' => 'Missing required fields.'
+        'message' => 'Missing or invalid required fields.'
     ]);
     exit();
 }
 
-$voter_id = $_SESSION['user_id'];
-$rated_student_id = $data['rated_student_id'];
-$window_id = $data['window_id'];
-$rating_value = $data['rating_value'];
+// Retrieve input
+$voter_id = (int) $_SESSION['user_id'];
+$rated_student_id = filter_var(
+    $data['rated_student_id'],
+    FILTER_VALIDATE_INT
+);
+$window_id = filter_var(
+    $data['window_id'],
+    FILTER_VALIDATE_INT
+);
+$stars = filter_var($data['stars'], FILTER_VALIDATE_INT);
+$label_ids = [];
 
-// Validate rating value
-if (!in_array($rating_value, [1, 2, 3], true)) {
+// Validate IDs and stars
+if (
+    $rated_student_id === false || $rated_student_id < 1 ||
+    $window_id === false || $window_id < 1 ||
+    $stars === false || !in_array($stars, [1, 2, 3], true)
+) {
     http_response_code(400);
     echo json_encode([
         'success' => false,
-        'message' => 'Rating must be 1, 2, or 3.'
+        'message' => 'Invalid student, window, or star value.'
     ]);
     exit();
 }
 
+// Validate label IDs
+foreach ($data['label_ids'] as $label_id) {
+
+    $id = filter_var($label_id, FILTER_VALIDATE_INT);
+
+    if ($id === false || $id < 1 || in_array($id, $label_ids, true)) {
+        http_response_code(400);
+        echo json_encode([
+            'success' => false,
+            'message' => 'Invalid or duplicate label ID.'
+        ]);
+        exit();
+    }
+
+    $label_ids[] = $id;
+}
+
 // Prevent self-rating
-if ($voter_id == $rated_student_id) {
+if ($voter_id === $rated_student_id) {
     http_response_code(400);
     echo json_encode([
         'success' => false,
@@ -58,50 +94,176 @@ if ($voter_id == $rated_student_id) {
 }
 
 try {
-    // Check whether the voting window is open
+
+    // Start transaction
+    $pdo->beginTransaction();
+
+    // Check voting window and lock its row
     $stmt = $pdo->prepare(
-        "SELECT id
-         FROM voting_windows
-         WHERE id = :window_id
-           AND status = 'open'
-           AND NOW() BETWEEN starts_at AND ends_at"
+        "SELECT id, max_votes_per_student
+        FROM voting_windows
+        WHERE id = :window_id
+        AND status = 'active'
+        AND NOW() BETWEEN start_time AND end_time
+        FOR UPDATE"
     );
 
-    $stmt->execute([':window_id' => $window_id]);
+    $stmt->execute([
+        ':window_id' => $window_id
+    ]);
+
     $window = $stmt->fetch(PDO::FETCH_ASSOC);
 
     if (!$window) {
+        $pdo->rollBack();
+
         http_response_code(400);
         echo json_encode([
             'success' => false,
-            'message' => 'Voting window is not open.'
+            'message' => 'Voting window is not active.'
         ]);
         exit();
     }
 
-    // Insert the rating
+    // Check recipient is an active student
+    $stmt = $pdo->prepare(
+        "SELECT id
+        FROM users
+        WHERE id = :student_id
+        AND role = 'student'
+        AND status = 'active'"
+    );
+
+    $stmt->execute([
+        ':student_id' => $rated_student_id
+    ]);
+
+    if (!$stmt->fetch(PDO::FETCH_ASSOC)) {
+        $pdo->rollBack();
+
+        http_response_code(400);
+        echo json_encode([
+            'success' => false,
+            'message' => 'Invalid student.'
+        ]);
+        exit();
+    }
+
+    // Validate selected labels against the star level
+    if (!empty($label_ids)) {
+
+        $placeholders = implode(
+            ', ',
+            array_fill(0, count($label_ids), '?')
+        );
+
+        $stmt = $pdo->prepare(
+            "SELECT id
+            FROM labels
+            WHERE id IN ($placeholders)
+            AND stars_level = ?
+            AND status = 'active'"
+        );
+
+        $stmt->execute(array_merge($label_ids, [$stars]));
+
+        $valid_labels = $stmt->fetchAll(PDO::FETCH_COLUMN);
+
+        if (count($valid_labels) !== count($label_ids)) {
+            $pdo->rollBack();
+
+            http_response_code(400);
+            echo json_encode([
+                'success' => false,
+                'message' => 'One or more selected labels are invalid for this rating.'
+            ]);
+            exit();
+        }
+    }
+
+    // Check maximum voting limit
+    $stmt = $pdo->prepare(
+        "SELECT COUNT(*)
+        FROM ratings
+        WHERE voter_id = :voter_id
+        AND voting_window_id = :window_id
+        AND status IN ('active', 'flagged')"
+    );
+
+    $stmt->execute([
+        ':voter_id' => $voter_id,
+        ':window_id' => $window_id
+    ]);
+
+    $submitted_votes = (int) $stmt->fetchColumn();
+
+    if ($submitted_votes >= (int) $window['max_votes_per_student']) {
+        $pdo->rollBack();
+
+        http_response_code(400);
+        echo json_encode([
+            'success' => false,
+            'message' => 'You have reached the maximum number of votes.'
+        ]);
+        exit();
+    }
+
+    // Insert rating
     $stmt = $pdo->prepare(
         "INSERT INTO ratings
-            (voter_id, rated_student_id, window_id, rating_value, status)
-         VALUES
-            (:voter_id, :rated_student_id, :window_id, :rating_value, 'active')"
+        (voter_id, voter_to_id, voting_window_id, stars)
+        VALUES
+        (:voter_id, :rated_student_id, :window_id, :stars)"
     );
 
     $stmt->execute([
         ':voter_id' => $voter_id,
         ':rated_student_id' => $rated_student_id,
         ':window_id' => $window_id,
-        ':rating_value' => $rating_value
+        ':stars' => $stars
     ]);
 
+    // Get the newly created rating ID
+    $rating_id = $pdo->lastInsertId();
+
+    // Insert selected labels
+    if (!empty($label_ids)) {
+
+        $stmt = $pdo->prepare(
+            "INSERT INTO rating_labels (rating_id, label_id)
+            VALUES (:rating_id, :label_id)"
+        );
+
+        foreach ($label_ids as $label_id) {
+            $stmt->execute([
+                ':rating_id' => $rating_id,
+                ':label_id' => $label_id
+            ]);
+        }
+    }
+
+    // Save all changes
+    $pdo->commit();
+
+    http_response_code(201);
     echo json_encode([
         'success' => true,
         'message' => 'Rating submitted successfully.'
     ]);
 
+    exit();
+
 } catch (PDOException $e) {
-    // MySQL duplicate entry error
-    if ($e->getCode() === '23000') {
+
+    if ($pdo->inTransaction()) {
+        $pdo->rollBack();
+    }
+
+    // Duplicate rating
+    if (
+        isset($e->errorInfo[1]) &&
+        $e->errorInfo[1] == 1062
+    ) {
         http_response_code(409);
         echo json_encode([
             'success' => false,
@@ -117,7 +279,8 @@ try {
         'success' => false,
         'message' => 'Failed to submit rating.'
     ]);
+
+    exit();
 }
 
-exit();
 ?>

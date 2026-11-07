@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Abuse review · 42 Amman Peer Rating</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap">
+  <link rel="stylesheet" href="/assets/css/app.css">
+  <link rel="icon" href="/assets/img/favicon.svg">
+</head>
+<body>
+  <main id="main">
+    <p style="margin:-14px 0 22px"><span class="chip red" id="count-chip" style="font-size:20px;padding:10px 18px;font-weight:700"></span></p>
+
+    <div class="abuse-tools">
+      <input class="input" id="search" placeholder="Search student or case" aria-label="Search student or case">
+      <select class="input" id="type" aria-label="Filter by type"><option value="">All types</option></select>
+      <select class="input" id="status" aria-label="Filter by status">
+        <option value="pending">Waiting for review</option>
+        <option value="">All cases</option>
+        <option value="confirmed">Confirmed (votes invalidated)</option>
+        <option value="rejected">False alarms</option>
+      </select>
+    </div>
+
+    <div class="abuse-layout">
+      <section class="card" aria-label="Flagged cases">
+        <h2>Flagged Cases</h2>
+        <ul class="case-list" id="cases"><li class="skeleton" style="height:80px"></li></ul>
+      </section>
+      <section class="card case-detail" id="detail" aria-live="polite">
+        <div class="empty"><strong>Select a case</strong>Each case explains what happened and who is involved.</div>
+      </section>
+    </div>
+
+    <details class="card" style="margin-top:22px">
+      <summary style="cursor:pointer;font-weight:700">How detection works</summary>
+      <div id="how" class="small" style="margin-top:12px"></div>
+    </details>
+  </main>
+
+  <script src="/assets/js/app.js"></script>
+  <script>
+    let all = [];
+    let types = {};
+    let current = null;
+    const params = new URLSearchParams(location.search);
+
+    (async () => {
+      const user = await guard('staff');
+      shell(user, 'abuse', 'Abuse Review');
+      if (params.get('type')) $('#status').value = '';
+      load();
+    })();
+
+    async function load(keepKey) {
+      let d;
+      try { d = await api(withWindow('/api/staff/abuse.php')); }
+      catch (e) { return showError($('#cases'), e); }
+      const ws = await api('/api/staff/windows.php').catch(() => null);
+      if (ws) windowPicker(ws.windows, d.window, () => load());
+
+      all = d.cases;
+      types = d.types;
+      const typeSel = $('#type');
+      if (typeSel.options.length === 1) {
+        typeSel.insertAdjacentHTML('beforeend', Object.entries(types).map(([k, t]) => `<option value="${k}">${esc(t.label)}</option>`).join(''));
+        if (params.get('type')) typeSel.value = params.get('type');
+      }
+      const th = d.thresholds || {};
+      $('#how').innerHTML = `
+        <p>The system re-checks every vote of the window each time this page opens. It never punishes anyone automatically: it only points you to unusual patterns, and you decide.</p>
+        <ul>
+          <li><strong>Friends boosting</strong>: 3+ students who all gave each other 3 stars.</li>
+          <li><strong>Pair voting / revenge</strong>: two students rating each other: both 3 stars, a 1-star answer to a low vote, or within ${th.pair_fast_minutes} minutes.</li>
+          <li><strong>Group voting</strong>: ${th.group_min_voters}+ students giving one student the same stars within ${th.group_minutes} minutes.</li>
+          <li><strong>Bulk votes</strong>: ${th.bulk_min_votes}+ votes on one student within ${th.bulk_minutes} minutes.</li>
+          <li><strong>Too fast / too often</strong>: ${th.fast_min_votes}+ votes within ${Math.round(th.fast_seconds / 60)} minutes, or far more attempts than the vote limit.</li>
+          <li><strong>Repeated votes</strong>: ${th.repeat_min_attempts}+ attempts to rate the same student (rejected attempts are logged).</li>
+          <li><strong>Extreme voter</strong>: ${th.extreme_min_votes}+ votes that are all 1 star or all 3 stars.</li>
+          <li><strong>Malicious serious vote</strong>: a 1-star vote with a serious label when ${th.serious_min_others}+ others rated the student ${th.serious_min_avg}+ and nobody else reported a problem.</li>
+        </ul>
+        <p>Invalidated votes stop counting in every average immediately. Every decision is saved with your name in the audit log.</p>`;
+      render(keepKey);
+    }
+
+    function filtered() {
+      const term = $('#search').value.trim().toLowerCase();
+      const type = $('#type').value;
+      const status = $('#status').value;
+      return all.filter((c) => (!type || c.type === type)
+        && (!status || c.review_status === status)
+        && (!term || c.summary.toLowerCase().includes(term) || c.students.some((s) => s.username.toLowerCase().includes(term) || s.full_name.toLowerCase().includes(term))));
+    }
+
+    function render(keepKey) {
+      const pending = all.filter((c) => c.review_status === 'pending').length;
+      setAbuseCount(pending);
+      $('#count-chip').innerHTML = `⚠ ${pending} case${pending == 1 ? '' : 's'} waiting for review`;
+      const list = filtered();
+      $('#cases').innerHTML = list.length ? list.map((c) => {
+        const sus = c.students.filter((s) => s.role === 'suspected').length;
+        const aff = c.students.length - sus;
+        return `<li><button class="case-item ${c.review_status !== 'pending' ? 'done' : ''}" data-key="${esc(c.case_key)}" aria-current="${current && current.case_key === c.case_key}">
+          <span style="display:flex">${ICON[types[c.type].icon]}</span>
+          <span><span class="t">${esc(c.type_label)}</span>
+            <span class="s" style="display:block">${sus} suspected${aff ? `, ${aff} affected` : ''} · ${fmtDate(c.time_to)}</span></span>
+          <span style="display:flex;flex-direction:column;gap:4px;align-items:flex-end">
+            <span class="sev ${c.severity}">${c.severity}</span>
+            ${c.review_status !== 'pending' ? `<span class="status-pill ${c.review_status}">${statusText(c.review_status)}</span>` : ''}</span>
+        </button></li>`;
+      }).join('') : '<li class="empty"><strong>No cases here</strong>Nothing matches these filters.</li>';
+
+      const next = list.find((c) => c.case_key === (keepKey || (current && current.case_key))) || list[0];
+      if (next) show(next.case_key); else $('#detail').innerHTML = '<div class="empty"><strong>No case selected</strong></div>';
+    }
+
+    function statusText(s) {
+      return { pending: 'Waiting', confirmed: 'Votes invalidated', rejected: 'False alarm', reviewed: 'Reviewed' }[s] || s;
+    }
+
+    function show(key) {
+      current = all.find((c) => c.case_key === key);
+      $$('.case-item').forEach((b) => b.setAttribute('aria-current', String(b.dataset.key === key)));
+      const c = current;
+      const affected = c.students.filter((s) => s.role === 'affected');
+      const suspected = c.students.filter((s) => s.role === 'suspected');
+      $('#detail').innerHTML = `
+        <div class="section-title"><h2>${esc(c.type_label)}</h2><span class="status-pill ${c.review_status}">${statusText(c.review_status)}</span></div>
+        <p class="case-summary">${esc(c.summary)}</p>
+        <div class="case-facts">
+          <div><span class="muted">Students suspected</span><strong>${suspected.length}</strong></div>
+          <div><span class="muted">Affected student${affected.length == 1 ? '' : 's'}</span><strong>${affected.length ? affected.map((s) => esc(s.full_name)).join(', ') : '—'}</strong></div>
+          <div><span class="muted">Time window</span><strong>${fmtDate(c.time_from)}${c.time_to !== c.time_from ? ' – ' + fmtDate(c.time_to).split(', ').pop() : ''}</strong></div>
+        </div>
+        <div class="who-list">${c.students.map((s) => `<a class="chip ${s.role === 'suspected' ? 'red' : ''}" href="/staff/students.html?student=${s.id}" title="${s.role}">${esc(s.full_name)} (${esc(s.username)}) · ${s.role}</a>`).join('')}</div>
+        ${c.ratings.length ? `
+        <div class="table-wrap"><table class="t">
+          <thead><tr><th><input type="checkbox" id="all-votes" aria-label="Select all votes"></th><th>Voter</th><th>Rated</th><th>Stars</th><th>Labels</th><th>Time</th></tr></thead>
+          <tbody>${c.ratings.map((r) => `
+            <tr class="${r.status === 'cancelled' ? 'cancelled' : ''}">
+              <td><input type="checkbox" class="vote" value="${r.id}" ${r.status === 'cancelled' ? 'disabled' : 'checked'} aria-label="Select vote ${r.id}"></td>
+              <td>${esc(r.voter)}</td><td>${esc(r.target)}</td><td>${starsHtml(r.stars)}</td>
+              <td><div class="chips">${r.labels.map((l) => `<span class="chip ${r.status === 'cancelled' ? 'cancelled' : 'serious'}">${esc(l)}</span>`).join('')}</div></td>
+              <td class="small">${fmtDate(r.created_at)}${r.status === 'cancelled' ? '<br><em>invalidated</em>' : ''}</td></tr>`).join('')}</tbody>
+        </table></div>` : '<p class="muted">These were rejected attempts; there are no stored votes to invalidate.</p>'}
+        ${c.reviewed_by ? `<p class="small muted">Decision by ${esc(c.reviewed_by)} · ${fmtDate(c.reviewed_at)}</p>` : ''}
+        <div class="case-actions">
+          ${c.ratings.some((r) => r.status !== 'cancelled') ? `<button class="btn" id="invalidate">${ICON.ban} Invalidate selected votes</button>` : ''}
+          ${c.review_status === 'pending' ? `<button class="btn outline" id="dismiss">${ICON.check} Mark as false alarm</button>`
+            : `<button class="btn ghost" id="reopen">Reopen case</button>`}
+          ${c.ratings.some((r) => r.status === 'cancelled') ? `<button class="btn ghost" id="restore">Restore invalidated votes</button>` : ''}
+        </div>`;
+
+      const allBox = $('#all-votes');
+      if (allBox) {
+        allBox.checked = true;
+        allBox.addEventListener('change', () => $$('.vote:not([disabled])').forEach((b) => { b.checked = allBox.checked; }));
+      }
+      on('#invalidate', invalidate);
+      on('#dismiss', () => act('dismiss', [], 'Mark this case as a false alarm? The votes stay counted.'));
+      on('#reopen', () => act('reopen', []));
+      on('#restore', () => act('restore', c.ratings.filter((r) => r.status === 'cancelled').map((r) => r.id), 'Restore the invalidated votes? They will count again.'));
+    }
+
+    function on(sel, fn) { const el = $(sel); if (el) el.addEventListener('click', fn); }
+
+    async function invalidate() {
+      const ids = $$('.vote:checked').map((b) => Number(b.value));
+      if (!ids.length) return toast('Select at least one vote.', 'error');
+      act('invalidate', ids, `Invalidate ${ids.length} vote${ids.length == 1 ? '' : 's'}? They will stop counting in the students' averages right away. You can restore them later.`);
+    }
+
+    async function act(action, ids, question) {
+      if (question) {
+        const ok = await confirmDialog({ title: 'Please confirm', body: `<p>${esc(question)}</p>`, ok: 'Confirm', danger: action === 'invalidate' });
+        if (!ok) return;
+      }
+      try {
+        const r = await api('/api/staff/abuse_action.php', { method: 'POST', body: { action, case_key: current.case_key, rating_ids: ids } });
+        toast(r.message);
+        load(current.case_key);
+      } catch (e) { toast(e.message, 'error'); }
+    }
+
+    $('#cases').addEventListener('click', (e) => { const b = e.target.closest('.case-item'); if (b) show(b.dataset.key); });
+    ['#search', '#type', '#status'].forEach((s) => $(s).addEventListener('input', () => render()));
+  </script>
+</body>
+</html>

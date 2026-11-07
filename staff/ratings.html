@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ratings · 42 Amman Peer Rating</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap">
+  <link rel="stylesheet" href="/assets/css/app.css">
+  <link rel="icon" href="/assets/img/favicon.svg">
+</head>
+<body>
+  <main id="main">
+    <div class="tabs" role="tablist">
+      <button role="tab" data-tab="all" aria-selected="true">All ratings</button>
+      <button role="tab" data-tab="label" aria-selected="false">Grouped by label</button>
+      <button role="tab" data-tab="stars" aria-selected="false">Grouped by stars</button>
+    </div>
+
+    <section id="tab-all">
+      <div class="card" style="margin-bottom:18px">
+        <div class="row">
+          <label class="grow">Student<br><select class="input" id="f-student"><option value="">Everyone</option></select></label>
+          <label>Direction<br><select class="input" id="f-dir"><option value="both">Given or received</option><option value="given">Given by</option><option value="received">Received by</option></select></label>
+          <label>Stars<br><select class="input" id="f-stars"><option value="">Any</option><option>3</option><option>2</option><option>1</option></select></label>
+          <label class="grow">Label<br><select class="input" id="f-label"><option value="">Any label</option></select></label>
+          <label>Status<br><select class="input" id="f-status"><option value="">Any</option><option value="active">Counted</option><option value="cancelled">Invalidated</option></select></label>
+        </div>
+      </div>
+      <p class="muted small" id="count"></p>
+      <div class="card" style="padding:14px 18px">
+        <div class="table-wrap"><table class="t">
+          <thead><tr><th>Time</th><th>Voter</th><th>Rated</th><th>Stars</th><th>Labels</th><th></th></tr></thead>
+          <tbody id="rows"><tr><td colspan="6"><div class="skeleton"></div></td></tr></tbody>
+        </table></div>
+      </div>
+    </section>
+
+    <section id="tab-group" hidden>
+      <div class="card"><div class="table-wrap"><table class="t">
+        <thead><tr><th id="g-head">Label</th><th class="num">Ratings</th><th class="num">Students who received it</th><th></th></tr></thead>
+        <tbody id="g-rows"></tbody>
+      </table></div></div>
+    </section>
+  </main>
+
+  <script src="/assets/js/app.js"></script>
+  <script>
+    const qs = new URLSearchParams(location.search);
+    let catOf = {};
+
+    (async () => {
+      const user = await guard('staff');
+      shell(user, 'ratings', 'Ratings');
+      const [ws, st, lb] = await Promise.all([api('/api/staff/windows.php'), api(withWindow('/api/staff/students.php')), api('/api/staff/labels.php')]);
+      windowPicker(ws.windows, st.window, () => { loadAll(); if (!$('#tab-group').hidden) loadGroup(); });
+      $('#f-student').insertAdjacentHTML('beforeend', st.students.map((s) => `<option value="${s.id}">${esc(s.full_name)} (${esc(s.username)})</option>`).join(''));
+      $('#f-label').insertAdjacentHTML('beforeend', lb.labels.map((l) => `<option value="${l.id}">${esc(l.title)}</option>`).join(''));
+      lb.labels.forEach((l) => { catOf[l.title] = l.category; });
+      if (qs.get('stars')) $('#f-stars').value = qs.get('stars');
+      if (qs.get('label_id')) $('#f-label').value = qs.get('label_id');
+      if (qs.get('student_id')) $('#f-student').value = qs.get('student_id');
+      switchTab(qs.get('tab') || 'all');
+      loadAll();
+    })();
+
+    function switchTab(tab) {
+      $$('.tabs [data-tab]').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.tab === tab)));
+      $('#tab-all').hidden = tab !== 'all';
+      $('#tab-group').hidden = tab === 'all';
+      if (tab !== 'all') loadGroup(tab);
+    }
+    $$('.tabs [data-tab]').forEach((b) => b.addEventListener('click', () => switchTab(b.dataset.tab)));
+
+    async function loadAll() {
+      const p = new URLSearchParams();
+      const sid = $('#f-student').value;
+      if (sid) { p.set('student_id', sid); p.set('direction', $('#f-dir').value); }
+      if ($('#f-stars').value) p.set('stars', $('#f-stars').value);
+      if ($('#f-label').value) p.set('label_id', $('#f-label').value);
+      if ($('#f-status').value) p.set('status', $('#f-status').value);
+      try {
+        const d = await api(withWindow('/api/staff/reviews.php?' + p));
+        $('#count').textContent = `${d.reviews.length} rating${d.reviews.length == 1 ? '' : 's'}${d.window ? ' in ' + d.window.title : ''}`;
+        $('#rows').innerHTML = d.reviews.map((r) => `
+          <tr class="${r.status === 'cancelled' ? 'cancelled' : ''}">
+            <td class="small">${fmtDate(r.created_at)}</td>
+            <td><a href="/staff/students.html?student=${r.voter_id}">${esc(r.voter)}</a></td>
+            <td><a href="/staff/students.html?student=${r.target_id}">${esc(r.target)}</a></td>
+            <td>${starsHtml(r.stars)}</td>
+            <td><div class="chips">${r.status === 'cancelled' ? r.labels.map((l) => `<span class="chip cancelled">${esc(l)}</span>`).join('') : labelChips(r.labels, catOf)}</div></td>
+            <td>${r.status === 'cancelled' ? '<span class="chip">invalidated</span>' : ''}</td>
+          </tr>`).join('') || '<tr><td colspan="6" class="empty">No ratings match these filters.</td></tr>';
+      } catch (e) { showError($('#rows'), e); }
+    }
+    ['#f-student', '#f-dir', '#f-stars', '#f-label', '#f-status'].forEach((s) => $(s).addEventListener('change', loadAll));
+
+    async function loadGroup(by = (qs.get('tab') === 'stars' ? 'stars' : 'label')) {
+      by = $$('.tabs [aria-selected="true"]')[0]?.dataset.tab === 'stars' ? 'stars' : 'label';
+      $('#g-head').textContent = by === 'stars' ? 'Stars' : 'Label';
+      try {
+        const d = await api(withWindow('/api/staff/grouped.php?by=' + by));
+        const max = Math.max(1, ...d.groups.map((g) => +g.ratings));
+        $('#g-rows').innerHTML = d.groups.map((g) => `
+          <tr>
+            <td style="min-width:220px"><div class="hbar ${g.category || (g.key == 1 ? 'serious' : '')}" style="margin:0;grid-template-columns:150px 1fr">
+              <span>${by === 'stars' ? starsHtml(g.key) : `<span class="chip ${esc(g.category)}">${esc(g.name)}</span>`}</span>
+              <span class="track"><span style="width:${g.ratings / max * 100}%"></span></span></div></td>
+            <td class="num">${g.ratings}</td><td class="num">${g.students}</td>
+            <td><button class="btn sm ghost" data-filter="${by}" data-key="${g.key}">Show ratings</button></td>
+          </tr>`).join('') || '<tr><td colspan="4" class="empty">No ratings yet.</td></tr>';
+      } catch (e) { showError($('#g-rows'), e); }
+    }
+    $('#g-rows').addEventListener('click', (e) => {
+      const b = e.target.closest('[data-filter]');
+      if (!b) return;
+      $('#f-stars').value = b.dataset.filter === 'stars' ? b.dataset.key : '';
+      $('#f-label').value = b.dataset.filter === 'label' ? b.dataset.key : '';
+      switchTab('all');
+      loadAll();
+    });
+  </script>
+</body>
+</html>

@@ -1,21 +1,15 @@
-
 <?php
 
-require_once __DIR__ . '/../../config/session.php';
+require_once __DIR__ . '/../../config/auth.php';
 require_once __DIR__ . '/../../config/db.php';
 require_once __DIR__ . '/../../validator/register_val.php';
 
 header('Content-Type: application/json');
 
-// Check if user is already logged in
-if (isset($_SESSION['user_id'])) {
-    http_response_code(409);
-    echo json_encode([
-        'success' => false,
-        'message' => 'You are already logged in.'
-    ]);
-    exit();
-}
+// CHANGED (security): open self-registration let anyone create fake accounts,
+// which is the easiest way to boost a friend's rating. Accounts are now
+// created by STAFF only (students come from the school's list).
+require_staff();
 
 // Check request method
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {

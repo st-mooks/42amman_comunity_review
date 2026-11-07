@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Labels · 42 Amman Peer Rating</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap">
+  <link rel="stylesheet" href="/assets/css/app.css">
+  <link rel="icon" href="/assets/img/favicon.svg">
+</head>
+<body>
+  <main id="main">
+    <div class="grid" style="grid-template-columns:minmax(0,1fr) minmax(280px,380px);align-items:start" id="layout">
+      <section class="card" style="padding:14px 18px">
+        <p class="muted small" style="margin:6px 4px 12px">The star range decides when a label is offered: e.g. <em>Helpful</em> (2–3★) appears for 2 and 3 stars, <em>Late</em> (1–2★) for 1 and 2 stars. Labels already used in ratings are disabled instead of deleted, so history stays intact.</p>
+        <div class="table-wrap"><table class="t">
+          <thead><tr><th>Label</th><th>Type</th><th>Offered for</th><th class="num">Used</th><th>Status</th><th></th></tr></thead>
+          <tbody id="rows"><tr><td colspan="6"><div class="skeleton"></div></td></tr></tbody>
+        </table></div>
+      </section>
+
+      <form class="card" id="form" novalidate>
+        <h2 id="form-title">Add a label</h2>
+        <input type="hidden" id="id">
+        <label class="field"><span>Name</span><input class="input" id="title" maxlength="100" required></label>
+        <label class="field"><span>Description <span class="muted small">(optional)</span></span><input class="input" id="description" maxlength="255"></label>
+        <label class="field"><span>Type</span>
+          <select class="input" id="category">
+            <option value="positive">Positive</option><option value="minor">Small issue</option><option value="serious">Serious issue</option>
+          </select></label>
+        <div class="row">
+          <label class="field grow"><span>From</span><select class="input" id="min_stars"><option>1</option><option>2</option><option selected>3</option></select></label>
+          <label class="field grow"><span>To</span><select class="input" id="max_stars"><option>1</option><option>2</option><option selected>3</option></select></label>
+        </div>
+        <div class="row">
+          <button class="btn" type="submit" id="save">Add label</button>
+          <button class="btn ghost" type="button" id="cancel" hidden>Cancel</button>
+        </div>
+      </form>
+    </div>
+  </main>
+
+  <script src="/assets/js/app.js"></script>
+  <script>
+    let labels = [];
+    const catName = { positive: 'Positive', minor: 'Small issue', serious: 'Serious' };
+
+    (async () => {
+      const user = await guard('staff');
+      shell(user, 'labels', 'Labels');
+      if (innerWidth < 1000) $('#layout').style.gridTemplateColumns = '1fr';
+      load();
+    })();
+
+    async function load() {
+      try {
+        labels = (await api('/api/staff/labels.php')).labels;
+        $('#rows').innerHTML = labels.map((l) => `
+          <tr class="${l.status === 'inactive' ? 'cancelled' : ''}">
+            <td><strong>${esc(l.title)}</strong>${l.description ? `<br><span class="small muted">${esc(l.description)}</span>` : ''}</td>
+            <td><span class="chip ${l.category}">${catName[l.category]}</span></td>
+            <td>${l.min_stars == l.max_stars ? `${l.min_stars}★ only` : `${l.min_stars}–${l.max_stars}★`}</td>
+            <td class="num">${l.used}</td>
+            <td>${l.status === 'active' ? 'Active' : 'Disabled'}</td>
+            <td style="white-space:nowrap">
+              <button class="btn sm ghost" data-edit="${l.id}">Edit</button>
+              <button class="btn sm ${l.status === 'active' ? 'ghost' : ''}" data-toggle="${l.id}">${l.status === 'active' ? 'Disable' : 'Enable'}</button>
+              ${l.used == 0 ? `<button class="btn sm danger" data-del="${l.id}">Delete</button>` : ''}
+            </td>
+          </tr>`).join('');
+      } catch (e) { showError($('#rows'), e); }
+    }
+
+    function resetForm() {
+      $('#form').reset();
+      $('#id').value = '';
+      $('#form-title').textContent = 'Add a label';
+      $('#save').textContent = 'Add label';
+      $('#cancel').hidden = true;
+    }
+    $('#cancel').addEventListener('click', resetForm);
+
+    $('#rows').addEventListener('click', async (e) => {
+      const b = e.target.closest('button');
+      if (!b) return;
+      if (b.dataset.edit) {
+        const l = labels.find((x) => x.id == b.dataset.edit);
+        $('#id').value = l.id;
+        $('#title').value = l.title;
+        $('#description').value = l.description || '';
+        $('#category').value = l.category;
+        $('#min_stars').value = l.min_stars;
+        $('#max_stars').value = l.max_stars;
+        $('#form-title').textContent = 'Edit label';
+        $('#save').textContent = 'Save changes';
+        $('#cancel').hidden = false;
+        $('#title').focus();
+        return;
+      }
+      try {
+        if (b.dataset.toggle) {
+          const l = labels.find((x) => x.id == b.dataset.toggle);
+          const r = await api('/api/staff/labels.php', { method: 'PUT', body: { id: l.id, status: l.status === 'active' ? 'inactive' : 'active' } });
+          toast(r.message);
+        }
+        if (b.dataset.del) {
+          const l = labels.find((x) => x.id == b.dataset.del);
+          if (!(await confirmDialog({ title: `Delete “${l.title}”?`, body: '<p>It has never been used, so it will be removed completely.</p>', ok: 'Delete', danger: true }))) return;
+          toast((await api('/api/staff/labels.php', { method: 'DELETE', body: { id: l.id } })).message);
+        }
+        load();
+      } catch (err) { toast(err.message, 'error'); }
+    });
+
+    $('#form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const body = {
+        title: $('#title').value.trim(),
+        description: $('#description').value.trim(),
+        category: $('#category').value,
+        min_stars: Number($('#min_stars').value),
+        max_stars: Number($('#max_stars').value),
+      };
+      if (!body.title) { toast('Give the label a name.', 'error'); return $('#title').focus(); }
+      if (body.min_stars > body.max_stars) { toast('"From" must be lower than or equal to "To".', 'error'); return; }
+      const id = $('#id').value;
+      try {
+        const r = await api('/api/staff/labels.php', { method: id ? 'PUT' : 'POST', body: id ? { id: Number(id), ...body } : body });
+        toast(r.message);
+        resetForm();
+        load();
+      } catch (err) { toast(err.message, 'error'); }
+    });
+  </script>
+</body>
+</html>

@@ -20,14 +20,16 @@ require_student();
 
 try {
 
-    // Calculate the student's average rating
+    // Calculate the student's average rating.
+    // FIX: flagged votes still count (they are only suspected, staff have not
+    // decided yet). Only votes invalidated by staff ('cancelled') are excluded.
     $stmt = $pdo->prepare(
         "SELECT
             COUNT(*) AS total_ratings,
             AVG(stars) AS average_rating
         FROM ratings
         WHERE voter_to_id = :student_id
-        AND status = 'active'"
+        AND status != 'cancelled'"
     );
 
     $stmt->execute([

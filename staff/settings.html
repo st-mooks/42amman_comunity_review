@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Voting window · 42 Amman Peer Rating</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap">
+  <link rel="stylesheet" href="/assets/css/app.css">
+  <link rel="icon" href="/assets/img/favicon.svg">
+</head>
+<body>
+  <main id="main">
+    <div class="grid g2" style="align-items:start" id="layout">
+      <form class="card" id="edit-form" novalidate>
+        <h2>Edit voting window</h2>
+        <p class="muted small" style="margin-top:-6px">Changes apply immediately, also while voting is open.</p>
+        <label class="field"><span>Window</span><select class="input" id="pick"></select></label>
+        <label class="field"><span>Name</span><input class="input" id="e-title" maxlength="255"></label>
+        <div class="row">
+          <label class="field grow"><span>Opens</span><input class="input" type="datetime-local" id="e-start"></label>
+          <label class="field grow"><span>Closes</span><input class="input" type="datetime-local" id="e-end"></label>
+        </div>
+        <div class="row" id="limits">
+          <label class="field grow"><span>Minimum votes per student</span><input class="input" type="number" min="0" max="100" id="e-min"></label>
+          <label class="field grow"><span>Maximum votes per student</span><input class="input" type="number" min="1" max="100" id="e-max"></label>
+        </div>
+        <label class="field"><span>Status</span>
+          <select class="input" id="e-status"><option value="active">Active (open between the dates)</option><option value="upcoming">Upcoming</option><option value="closed">Closed (stop voting now)</option></select></label>
+        <div class="row"><button class="btn" type="submit">Save changes</button><span id="e-state" class="small muted"></span></div>
+      </form>
+
+      <div>
+        <form class="card" id="new-form" novalidate style="margin-bottom:22px">
+          <h2>Start a new window</h2>
+          <label class="field"><span>Name</span><input class="input" id="n-title" placeholder="e.g. December peer review" maxlength="255"></label>
+          <div class="row">
+            <label class="field grow"><span>Opens</span><input class="input" type="datetime-local" id="n-start"></label>
+            <label class="field grow"><span>Closes</span><input class="input" type="datetime-local" id="n-end"></label>
+          </div>
+          <div class="row">
+            <label class="field grow"><span>Min votes</span><input class="input" type="number" min="0" value="2" id="n-min"></label>
+            <label class="field grow"><span>Max votes</span><input class="input" type="number" min="1" value="5" id="n-max"></label>
+          </div>
+          <button class="btn outline" type="submit">Create window</button>
+        </form>
+        <section class="card">
+          <h2>All windows</h2>
+          <div class="table-wrap"><table class="t"><thead><tr><th>Name</th><th>Dates</th><th class="num">Votes</th><th>State</th></tr></thead><tbody id="list"></tbody></table></div>
+        </section>
+      </div>
+    </div>
+  </main>
+
+  <script src="/assets/js/app.js"></script>
+  <script>
+    let windows = [];
+    const toLocal = (s) => (s || '').replace(' ', 'T').slice(0, 16);
+
+    (async () => {
+      const user = await guard('staff');
+      shell(user, 'settings', 'Voting window');
+      if (innerWidth < 1100) $('#layout').style.gridTemplateColumns = '1fr';
+      const now = new Date();
+      const pad = (n) => String(n).padStart(2, '0');
+      const fmt = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+      $('#n-start').value = fmt(now);
+      $('#n-end').value = fmt(new Date(now.getTime() + 7 * 86400000));
+      load();
+    })();
+
+    async function load(keepId) {
+      try {
+        windows = (await api('/api/staff/windows.php')).windows;
+        const sel = $('#pick');
+        const want = keepId || windowParam() || (windows.find((w) => +w.is_open) || windows[0] || {}).id;
+        sel.innerHTML = windows.map((w) => `<option value="${w.id}">${esc(w.title)}</option>`).join('');
+        if (want) sel.value = want;
+        fill();
+        $('#list').innerHTML = windows.map((w) => `
+          <tr><td><strong>${esc(w.title)}</strong></td><td class="small">${fmtDate(w.start_time)} →<br>${fmtDate(w.end_time)}</td>
+          <td class="num">${w.ratings}</td>
+          <td>${+w.is_open ? '<span class="chip green">open now</span>' : `<span class="chip">${esc(w.status)}</span>`}</td></tr>`).join('')
+          || '<tr><td colspan="4" class="empty">No windows yet.</td></tr>';
+      } catch (e) { showError($('#list'), e); }
+    }
+
+    function fill() {
+      const w = windows.find((x) => x.id == $('#pick').value);
+      if (!w) return;
+      $('#e-title').value = w.title;
+      $('#e-start').value = toLocal(w.start_time);
+      $('#e-end').value = toLocal(w.end_time);
+      $('#e-min').value = w.min_votes_per_student;
+      $('#e-max').value = w.max_votes_per_student;
+      $('#e-status').value = w.status;
+      $('#e-state').innerHTML = +w.is_open ? '<span class="chip green">Students can vote right now</span>' : '<span class="chip">Students cannot vote in this window now</span>';
+    }
+    $('#pick').addEventListener('change', fill);
+
+    $('#edit-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const min = Number($('#e-min').value), max = Number($('#e-max').value);
+      if (min > max) return toast('The minimum cannot be higher than the maximum.', 'error');
+      if ($('#e-end').value <= $('#e-start').value) return toast('The window must close after it opens.', 'error');
+      try {
+        const r = await api('/api/staff/windows.php', {
+          method: 'PUT',
+          body: { id: Number($('#pick').value), title: $('#e-title').value, start_time: $('#e-start').value, end_time: $('#e-end').value, min_votes: min, max_votes: max, status: $('#e-status').value },
+        });
+        toast(r.message);
+        load($('#pick').value);
+      } catch (err) { toast(err.message, 'error'); }
+    });
+
+    $('#new-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      try {
+        const r = await api('/api/staff/windows.php', {
+          method: 'POST',
+          body: { title: $('#n-title').value, start_time: $('#n-start').value, end_time: $('#n-end').value, min_votes: Number($('#n-min').value), max_votes: Number($('#n-max').value), status: 'active' },
+        });
+        toast(r.message);
+        $('#n-title').value = '';
+        load(r.id);
+      } catch (err) { toast(err.message, 'error'); }
+    });
+  </script>
+</body>
+</html>

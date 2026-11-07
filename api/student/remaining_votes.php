@@ -22,7 +22,7 @@ try {
 
     // Get the current active voting window
     $stmt = $pdo->prepare(
-        "SELECT id, max_votes_per_student
+        "SELECT id, min_votes_per_student, max_votes_per_student
         FROM voting_windows
         WHERE status = 'active'
         AND NOW() BETWEEN start_time AND end_time
@@ -41,13 +41,14 @@ try {
         exit();
     }
 
-    // Count the student's submitted active ratings
+    // Count every rating the student submitted in this window.
+    // FIX: must match the rule in submit_rating.php, otherwise a student with
+    // flagged votes saw "2 left" and was then rejected.
     $stmt = $pdo->prepare(
         "SELECT COUNT(*)
         FROM ratings
         WHERE voter_id = :voter_id
-        AND voting_window_id = :window_id
-        AND status = 'active'"
+        AND voting_window_id = :window_id"
     );
 
     $stmt->execute([
@@ -66,6 +67,7 @@ try {
     http_response_code(200);
     echo json_encode([
         'success' => true,
+        'min_votes' => (int) $window['min_votes_per_student'],
         'max_votes' => (int) $window['max_votes_per_student'],
         'submitted_votes' => $submitted_votes,
         'remaining_votes' => $remaining_votes

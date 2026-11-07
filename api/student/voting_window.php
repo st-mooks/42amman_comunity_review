@@ -1,4 +1,3 @@
-
 <?php
 
 require_once __DIR__ . '/../../config/session.php';
@@ -30,7 +29,10 @@ try {
             end_time,
             min_votes_per_student,
             max_votes_per_student,
-            status
+            status,
+            -- NEW: seconds until the deadline, computed by the database clock,
+            -- so the countdown is right whatever timezone the browser is in
+            TIMESTAMPDIFF(SECOND, NOW(), end_time) AS seconds_left
         FROM voting_windows
         WHERE status = 'active'
         AND NOW() BETWEEN start_time AND end_time

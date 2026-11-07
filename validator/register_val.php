@@ -1,4 +1,3 @@
-
 <?php
 
 function validate_register_input(
@@ -13,15 +12,15 @@ function validate_register_input(
     // Full name validation
     if (empty($full_name)) {
         $errors[] = "Full name is required.";
-    } elseif (!preg_match("/^[a-zA-Z]+(\s[a-zA-Z]+)*$/", $full_name)) {
-        $errors[] = "Full name can only contain letters and spaces.";
+    } elseif (!preg_match("/^\p{L}+([\s'-]\p{L}+)*$/u", $full_name)) {
+        $errors[] = "Full name can only contain letters, spaces, hyphens and apostrophes.";
     }
 
     // Username validation
     if (empty($username)) {
         $errors[] = "Username is required.";
-    } elseif (!preg_match("/^[a-zA-Z_]+$/", $username)) {
-        $errors[] = "Username can only contain letters and underscores.";
+    } elseif (!preg_match("/^[a-zA-Z0-9_-]{2,30}$/", $username)) {
+        $errors[] = "Username can only contain letters, numbers, - and _ (2-30 characters).";
     }
 
     // Email validation

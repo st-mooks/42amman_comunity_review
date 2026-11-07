@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Students · 42 Amman Peer Rating</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap">
+  <link rel="stylesheet" href="/assets/css/app.css">
+  <link rel="icon" href="/assets/img/favicon.svg">
+</head>
+<body>
+  <main id="main">
+    <div class="row" style="margin-bottom:18px">
+      <input class="input grow" id="search" placeholder="Search by name or login" aria-label="Search students">
+      <div class="tabs" role="tablist" style="margin:0">
+        <button role="tab" data-f="all" aria-selected="true">All</button>
+        <button role="tab" data-f="voted" aria-selected="false">Voted</button>
+        <button role="tab" data-f="not" aria-selected="false">Did not vote</button>
+        <button role="tab" data-f="below" aria-selected="false">Below minimum</button>
+      </div>
+    </div>
+    <p class="muted small" id="summary"></p>
+    <div class="card" style="padding:14px 18px">
+      <div class="table-wrap"><table class="t">
+        <thead><tr><th>Student</th><th>Login</th><th class="num">Given</th><th class="num">Received</th><th class="num">Average</th><th>Participation</th></tr></thead>
+        <tbody id="rows"><tr><td colspan="6"><div class="skeleton"></div></td></tr></tbody>
+      </table></div>
+    </div>
+  </main>
+
+  <script src="/assets/js/app.js"></script>
+  <script>
+    let students = [];
+    let win = null;
+    let filter = new URLSearchParams(location.search).get('filter') || 'all';
+
+    (async () => {
+      const user = await guard('staff');
+      shell(user, 'students', 'Students');
+      setTab(filter);
+      load();
+      const sid = new URLSearchParams(location.search).get('student');
+      if (sid) openStudent(sid);
+    })();
+
+    async function load() {
+      try {
+        const [d, ws] = await Promise.all([api(withWindow('/api/staff/students.php')), api('/api/staff/windows.php')]);
+        students = d.students;
+        win = d.window;
+        windowPicker(ws.windows, win, load);
+        render();
+      } catch (e) { showError($('#rows'), e); }
+    }
+
+    function setTab(f) {
+      filter = f;
+      $$('.tabs [data-f]').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.f === f)));
+    }
+
+    function render() {
+      const term = $('#search').value.trim().toLowerCase();
+      const list = students.filter((s) => (!term || s.full_name.toLowerCase().includes(term) || s.username.toLowerCase().includes(term))
+        && (filter === 'all' || (filter === 'voted' && s.voted) || (filter === 'not' && !s.voted) || (filter === 'below' && !s.reached_min)));
+      const voted = students.filter((s) => s.voted).length;
+      $('#summary').textContent = win
+        ? `${win.title}: ${voted} of ${students.length} students voted · minimum ${win.min_votes_per_student}, maximum ${win.max_votes_per_student} votes each. Click a student for details.`
+        : '';
+      $('#rows').innerHTML = list.map((s) => `
+        <tr class="click" data-id="${s.id}">
+          <td><strong>${esc(s.full_name)}</strong></td><td>${esc(s.username)}</td>
+          <td class="num">${s.given}</td><td class="num">${s.received}</td>
+          <td class="num">${s.average === null ? '<span class="muted">N/A</span>' : `<span class="stars-inline">${ICON.star} ${Number(s.average).toFixed(2)}</span>`}</td>
+          <td>${!s.voted ? '<span class="chip red">Did not vote</span>' : s.reached_min ? '<span class="chip green">Voted</span>' : '<span class="chip minor">Below minimum</span>'}</td>
+        </tr>`).join('') || '<tr><td colspan="6" class="empty">No students match.</td></tr>';
+    }
+
+    $('#search').addEventListener('input', render);
+    $$('.tabs [data-f]').forEach((b) => b.addEventListener('click', () => { setTab(b.dataset.f); render(); }));
+    $('#rows').addEventListener('click', (e) => { const tr = e.target.closest('tr[data-id]'); if (tr) openStudent(tr.dataset.id); });
+
+    // ---------- detail drawer ----------
+    async function openStudent(id) {
+      closeDrawer();
+      const back = document.createElement('div');
+      back.className = 'drawer-back';
+      back.addEventListener('click', closeDrawer);
+      const dr = document.createElement('aside');
+      dr.className = 'drawer';
+      dr.setAttribute('role', 'dialog');
+      dr.setAttribute('aria-modal', 'true');
+      dr.innerHTML = '<div class="skeleton" style="height:200px"></div>';
+      document.body.append(back, dr);
+      document.addEventListener('keydown', escClose);
+
+      try {
+        const d = await api(withWindow(`/api/staff/student.php?id=${encodeURIComponent(id)}`));
+        const row = (r, who) => `
+          <tr class="${r.status === 'cancelled' ? 'cancelled' : ''}">
+            <td>${esc(r.full_name)}<br><span class="small muted">${esc(r.username)}</span></td>
+            <td>${starsHtml(r.stars)}</td>
+            <td><div class="chips">${r.labels.map((l) => `<span class="chip ${r.status === 'cancelled' ? 'cancelled' : ''}">${esc(l)}</span>`).join('')}</div></td>
+            <td class="small">${fmtDate(r.created_at)}</td>
+            <td>${r.status === 'cancelled'
+              ? `<button class="btn sm ghost" data-act="restore" data-id="${r.id}">Restore</button>`
+              : `<button class="btn sm danger" data-act="invalidate" data-id="${r.id}">Invalidate</button>`}</td>
+          </tr>`;
+        dr.innerHTML = `
+          <button class="btn sm ghost close" aria-label="Close">✕</button>
+          <h2 style="margin:0">${esc(d.student.full_name)}</h2>
+          <p class="muted" style="margin:2px 0 18px">${esc(d.student.username)} · ${esc(d.window ? d.window.title : '')}</p>
+          <div class="grid g2" style="margin-bottom:18px">
+            <div class="card"><div class="small muted">Average received</div><div class="stat-value" style="font-size:40px">${d.average === null ? '—' : d.average.toFixed(2)}<span class="of">/ 3</span></div></div>
+            <div class="card"><div class="small muted">Votes given · received</div><div class="stat-value" style="font-size:40px">${d.given.length} · ${d.received.filter((r) => r.status !== 'cancelled').length}</div></div>
+          </div>
+          <div class="card" style="margin-bottom:18px"><h3>Labels received</h3>
+            <div class="chips">${Object.entries(d.labels_received).map(([l, n]) => `<span class="chip">${esc(l)} × ${n}</span>`).join('') || '<span class="muted">None yet</span>'}</div></div>
+          <div class="card" style="margin-bottom:18px"><h3>Who rated ${esc(d.student.full_name.split(' ')[0])}</h3>
+            <div class="table-wrap"><table class="t"><tbody>${d.received.map((r) => row(r)).join('') || '<tr><td class="empty">Nobody yet.</td></tr>'}</tbody></table></div></div>
+          <div class="card"><h3>Who ${esc(d.student.full_name.split(' ')[0])} rated</h3>
+            <div class="table-wrap"><table class="t"><tbody>${d.given.map((r) => row(r)).join('') || '<tr><td class="empty">Has not voted in this window.</td></tr>'}</tbody></table></div></div>`;
+        $('.close', dr).addEventListener('click', closeDrawer);
+        $('.close', dr).focus();
+        dr.addEventListener('click', async (e) => {
+          const b = e.target.closest('[data-act]');
+          if (!b) return;
+          const inv = b.dataset.act === 'invalidate';
+          const ok = await confirmDialog({ title: inv ? 'Invalidate this vote?' : 'Restore this vote?', body: `<p>${inv ? 'It will stop counting in the average right away.' : 'It will count again.'}</p>`, ok: inv ? 'Invalidate' : 'Restore', danger: inv });
+          if (!ok) return;
+          try {
+            const r = await api('/api/staff/abuse_action.php', { method: 'POST', body: { action: b.dataset.act, rating_ids: [Number(b.dataset.id)] } });
+            toast(r.message);
+            openStudent(id);
+            load();
+          } catch (err) { toast(err.message, 'error'); }
+        });
+      } catch (e) { showError(dr, e); }
+    }
+    function escClose(e) { if (e.key === 'Escape') closeDrawer(); }
+    function closeDrawer() {
+      $$('.drawer, .drawer-back').forEach((el) => el.remove());
+      document.removeEventListener('keydown', escClose);
+    }
+  </script>
+</body>
+</html>

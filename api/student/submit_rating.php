@@ -1,4 +1,3 @@
-
 <?php
 
 require_once __DIR__ . '/../../config/auth.php';
@@ -18,6 +17,22 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 
 // Only students can submit ratings
 require_student();
+
+// NEW: log every vote attempt (accepted or rejected) into vote_attempts.
+// The abuse detectors use this to spot "repeated votes" and "too fast / too often",
+// because rejected votes never reach the ratings table.
+function log_attempt($pdo, $voter_id, $target_id, $window_id, $outcome)
+{
+    try {
+        $stmt = $pdo->prepare(
+            "INSERT INTO vote_attempts (voter_id, target_id, voting_window_id, outcome)
+            VALUES (?, ?, ?, ?)"
+        );
+        $stmt->execute([$voter_id, $target_id ?: null, $window_id ?: null, $outcome]);
+    } catch (PDOException $e) {
+        error_log($e->getMessage()); // logging must never block a vote
+    }
+}
 
 // Read JSON request
 $data = json_decode(file_get_contents('php://input'), true);
@@ -83,6 +98,16 @@ foreach ($data['label_ids'] as $label_id) {
     $label_ids[] = $id;
 }
 
+// NEW: a rating must come with at least one label (spec: "stars and labels")
+if (count($label_ids) === 0) {
+    http_response_code(400);
+    echo json_encode([
+        'success' => false,
+        'message' => 'Please choose at least one label.'
+    ]);
+    exit();
+}
+
 // Prevent self-rating
 if ($voter_id === $rated_student_id) {
     http_response_code(400);
@@ -116,6 +141,7 @@ try {
 
     if (!$window) {
         $pdo->rollBack();
+        log_attempt($pdo, $voter_id, $rated_student_id, $window_id, 'window_closed');
 
         http_response_code(400);
         echo json_encode([
@@ -140,6 +166,7 @@ try {
 
     if (!$stmt->fetch(PDO::FETCH_ASSOC)) {
         $pdo->rollBack();
+        log_attempt($pdo, $voter_id, $rated_student_id, $window_id, 'invalid_target');
 
         http_response_code(400);
         echo json_encode([
@@ -150,6 +177,7 @@ try {
     }
 
     // Validate selected labels against the star level
+    // CHANGED: labels now have a star RANGE (min_stars..max_stars)
     if (!empty($label_ids)) {
 
         $placeholders = implode(
@@ -161,7 +189,7 @@ try {
             "SELECT id
             FROM labels
             WHERE id IN ($placeholders)
-            AND stars_level = ?
+            AND ? BETWEEN min_stars AND max_stars
             AND status = 'active'"
         );
 
@@ -171,6 +199,7 @@ try {
 
         if (count($valid_labels) !== count($label_ids)) {
             $pdo->rollBack();
+            log_attempt($pdo, $voter_id, $rated_student_id, $window_id, 'invalid_labels');
 
             http_response_code(400);
             echo json_encode([
@@ -182,12 +211,15 @@ try {
     }
 
     // Check maximum voting limit
+    // FIX: every vote the student cast counts toward the limit, including
+    // flagged or invalidated ones (same rule as remaining_votes.php), so an
+    // abuser cannot get votes back after staff cancel them.
     $stmt = $pdo->prepare(
         "SELECT COUNT(*)
         FROM ratings
         WHERE voter_id = :voter_id
         AND voting_window_id = :window_id
-        AND status IN ('active', 'flagged')"
+"
     );
 
     $stmt->execute([
@@ -199,6 +231,7 @@ try {
 
     if ($submitted_votes >= (int) $window['max_votes_per_student']) {
         $pdo->rollBack();
+        log_attempt($pdo, $voter_id, $rated_student_id, $window_id, 'limit_reached');
 
         http_response_code(400);
         echo json_encode([
@@ -244,6 +277,7 @@ try {
 
     // Save all changes
     $pdo->commit();
+    log_attempt($pdo, $voter_id, $rated_student_id, $window_id, 'accepted');
 
     http_response_code(201);
     echo json_encode([
@@ -264,6 +298,7 @@ try {
         isset($e->errorInfo[1]) &&
         $e->errorInfo[1] == 1062
     ) {
+        log_attempt($pdo, $voter_id, $rated_student_id, $window_id, 'duplicate');
         http_response_code(409);
         echo json_encode([
             'success' => false,
@@ -282,5 +317,3 @@ try {
 
     exit();
 }
-
-?>

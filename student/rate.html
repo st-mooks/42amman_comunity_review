@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Rate a peer · 42 Amman Peer Rating</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap">
+  <link rel="stylesheet" href="/assets/css/app.css">
+  <link rel="icon" href="/assets/img/favicon.svg">
+</head>
+<body>
+  <main id="main">
+    <div id="notice"></div>
+
+    <!-- Step 1: choose a peer -->
+    <section id="step-search" class="rate-panel">
+      <div class="search-wrap">
+        <label for="q" class="sr-only">Search for a peer</label>
+        <input id="q" class="search-box" placeholder="Search for a peer by name or Intra login" autocomplete="off" role="combobox" aria-expanded="false" aria-controls="results">
+        <div class="results" id="results" role="listbox" hidden></div>
+      </div>
+      <p class="muted small" id="search-hint" style="margin:16px 8px 0">Start typing a name or login. You can rate each peer once per voting window.</p>
+    </section>
+
+    <!-- Step 2: stars + labels -->
+    <section id="step-rate" class="rate-panel" hidden>
+      <div class="picked"><span id="picked-name"></span><button id="change" type="button">Change</button></div>
+
+      <div class="star-tiles" role="radiogroup" aria-label="How was your experience?">
+        <button type="button" class="star-tile" role="radio" aria-checked="false" data-stars="1" aria-label="1 star: serious issue"></button>
+        <button type="button" class="star-tile" role="radio" aria-checked="false" data-stars="2" aria-label="2 stars: neutral or a small issue"></button>
+        <button type="button" class="star-tile" role="radio" aria-checked="false" data-stars="3" aria-label="3 stars: positive impact"></button>
+      </div>
+
+      <div id="labels-box" hidden>
+        <h2 class="labels-head">Select labels (<span id="stars-n"></span> <span data-icon="star" style="width:30px;height:30px;vertical-align:-3px"></span>)
+          <span class="info" tabindex="0" data-tip="Labels explain your rating. Only staff can see them — the person you rate never sees who rated them or which labels were chosen.">i</span></h2>
+        <p>You can choose one or more.</p>
+        <div class="label-grid" id="labels"></div>
+        <div class="legend">
+          <span><i style="background:var(--green-soft)"></i>Positive</span>
+          <span><i style="background:#ead8b0"></i>Small issue</span>
+          <span><i style="background:var(--red-soft)"></i>Serious issue — staff review these carefully</span>
+        </div>
+      </div>
+      <p id="pick-stars" class="muted" style="font-size:20px">Pick 1, 2 or 3 stars to see the labels.</p>
+
+      <div class="submit-row"><button class="btn" id="submit" type="button" disabled>Submit</button></div>
+    </section>
+
+    <!-- Step 3: success -->
+    <section id="step-done" class="success rate-panel" hidden>
+      <svg class="badge" viewBox="0 0 19 19" aria-hidden="true" shape-rendering="crispEdges">
+        <path fill="#3f9a5c" d="M4 0h11v2h2v2h2v11h-2v2h-2v2H4v-2H2v-2H0V4h2V2h2z"/>
+        <path fill="#2a8048" d="M4 2h11v2h2v11h-2v2H4v-2H2V4h2z"/>
+        <path fill="#1d5e35" d="M5 3h9v2h2v9h-2v2H5v-2H3V5h2z"/>
+        <path fill="none" stroke="#f4f1ec" stroke-width="1.6" stroke-linecap="square" d="m6 9.6 2.4 2.4 4.8-5"/>
+      </svg>
+      <h2>Rating Submitted!</h2>
+      <p style="font-size:20px;margin:6px 0 0">Your feedback has been recorded.</p>
+      <hr>
+      <div class="pair">
+        <div>
+          <span data-icon="diamond" style="width:38px;height:38px"></span>
+          <div class="stat-label" style="justify-content:center">Votes left</div>
+          <div class="stat-value" id="done-votes" style="font-weight:400"></div>
+        </div>
+        <div>
+          <span data-icon="clock" style="width:38px;height:38px;color:var(--green)"></span>
+          <div class="stat-label" style="justify-content:center">Voting ends in</div>
+          <div class="stat-value" id="done-timer" style="font-weight:500"></div>
+        </div>
+      </div>
+      <a class="hero-btn" id="again" href="/student/rate.html"><span data-icon="users"></span><span id="again-text">Rate another peer</span><span class="arrow" data-icon="arrow"></span></a>
+    </section>
+  </main>
+
+  <script src="/assets/js/app.js"></script>
+  <script>
+    let windowInfo = null;
+    let peers = [];
+    let labels = [];
+    let chosen = null;      // peer object
+    let stars = 0;
+    const picked = new Set();
+
+    (async () => {
+      const user = await guard('student');
+      shell(user, 'rate');
+      $$('.star-tile').forEach((b) => { b.innerHTML = ICON.star.repeat(Number(b.dataset.stars)); });
+
+      try {
+        const [w, v, s, l] = await Promise.all([
+          api('/api/student/voting_window.php'),
+          api('/api/student/remaining_votes.php'),
+          api('/api/student/students.php'),
+          api('/api/student/labels.php'),
+        ]);
+        windowInfo = { ...w.window, remaining: v.remaining_votes, max: v.max_votes };
+        peers = s.students;
+        labels = l.labels;
+        if (v.remaining_votes === 0) {
+          lockPage('You have used all your votes for this window. Thank you!');
+          return;
+        }
+        // deep link: rate.html?peer=12
+        const pre = Number(new URLSearchParams(location.search).get('peer'));
+        const peer = peers.find((p) => p.id === pre && !Number(p.already_rated));
+        if (peer) choosePeer(peer);
+        else if ($('#q').value) renderResults(); // user typed before the list arrived
+        else $('#q').focus();
+      } catch (e) {
+        lockPage(e.status === 404 ? 'Voting is closed right now. There is no open voting window.' : e.message);
+      }
+    })();
+
+    function lockPage(text) {
+      $('#notice').innerHTML = `<div class="alert warn">${esc(text)} <a href="/student/">Back to home</a></div>`;
+      $('#q').disabled = true;
+    }
+
+    // ---------- step 1: search ----------
+    const q = $('#q');
+    const results = $('#results');
+    q.addEventListener('input', renderResults);
+    q.addEventListener('focus', renderResults);
+    q.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowDown') { e.preventDefault(); const f = $('button:not([disabled])', results); if (f) f.focus(); }
+      if (e.key === 'Enter') { e.preventDefault(); const f = $('button:not([disabled])', results); if (f) f.click(); }
+    });
+    results.addEventListener('keydown', (e) => {
+      const items = $$('button:not([disabled])', results);
+      const i = items.indexOf(document.activeElement);
+      if (e.key === 'ArrowDown' && i < items.length - 1) { e.preventDefault(); items[i + 1].focus(); }
+      if (e.key === 'ArrowUp') { e.preventDefault(); (i > 0 ? items[i - 1] : q).focus(); }
+    });
+    document.addEventListener('click', (e) => { if (!e.target.closest('.search-wrap')) { results.hidden = true; q.setAttribute('aria-expanded', 'false'); } });
+
+    function renderResults() {
+      const term = q.value.trim().toLowerCase();
+      if (!term) { results.hidden = true; q.setAttribute('aria-expanded', 'false'); return; }
+      const found = peers.filter((p) => p.full_name.toLowerCase().includes(term) || p.username.toLowerCase().includes(term)).slice(0, 8);
+      results.innerHTML = found.length
+        ? found.map((p) => `<button type="button" role="option" data-id="${p.id}" ${Number(p.already_rated) ? 'disabled' : ''}>
+              <span>${esc(p.full_name)} (${esc(p.username)})</span>${Number(p.already_rated) ? '<span class="done">Already rated</span>' : ''}</button>`).join('')
+        : '<p class="muted" style="padding:6px 32px;margin:0">No student matches “' + esc(q.value) + '”.</p>';
+      results.hidden = false;
+      q.setAttribute('aria-expanded', 'true');
+    }
+    results.addEventListener('click', (e) => {
+      const b = e.target.closest('button[data-id]');
+      if (!b || b.disabled) return;
+      choosePeer(peers.find((p) => p.id === Number(b.dataset.id)));
+    });
+
+    function choosePeer(peer) {
+      chosen = peer;
+      $('#picked-name').textContent = `${peer.full_name} (${peer.username})`;
+      $('#step-search').hidden = true;
+      $('#step-rate').hidden = false;
+      $('.star-tile').focus();
+    }
+    $('#change').addEventListener('click', () => {
+      chosen = null;
+      $('#step-rate').hidden = true;
+      $('#step-search').hidden = false;
+      q.value = '';
+      q.focus();
+    });
+
+    // ---------- step 2: stars + labels ----------
+    $$('.star-tile').forEach((tile) => tile.addEventListener('click', () => setStars(Number(tile.dataset.stars))));
+    $('.star-tiles').addEventListener('keydown', (e) => {
+      if (!['ArrowLeft', 'ArrowRight'].includes(e.key)) return;
+      const n = Math.min(3, Math.max(1, (stars || 1) + (e.key === 'ArrowRight' ? 1 : -1)));
+      setStars(n);
+      $(`.star-tile[data-stars="${n}"]`).focus();
+    });
+
+    function setStars(n) {
+      stars = n;
+      $$('.star-tile').forEach((t) => t.setAttribute('aria-checked', String(Number(t.dataset.stars) === n)));
+      // keep only labels that are still allowed for the new star level
+      [...picked].forEach((id) => {
+        const l = labels.find((x) => x.id === id);
+        if (!l || n < l.min_stars || n > l.max_stars) picked.delete(id);
+      });
+      $('#stars-n').textContent = n;
+      const allowed = labels.filter((l) => n >= l.min_stars && n <= l.max_stars);
+      $('#labels').innerHTML = allowed.map((l) => `<button type="button" class="label-chip ${l.category}" aria-pressed="${picked.has(l.id)}" data-id="${l.id}">${esc(l.title)}</button>`).join('');
+      $('#labels-box').hidden = false;
+      $('#pick-stars').hidden = true;
+      updateSubmit();
+    }
+
+    $('#labels').addEventListener('click', (e) => {
+      const b = e.target.closest('.label-chip');
+      if (!b) return;
+      const id = Number(b.dataset.id);
+      picked.has(id) ? picked.delete(id) : picked.add(id);
+      b.setAttribute('aria-pressed', String(picked.has(id)));
+      updateSubmit();
+    });
+
+    function updateSubmit() {
+      $('#submit').disabled = !(chosen && stars && picked.size);
+    }
+
+    // ---------- confirm + submit ----------
+    $('#submit').addEventListener('click', async () => {
+      const chosenLabels = labels.filter((l) => picked.has(l.id));
+      const serious = chosenLabels.some((l) => l.category === 'serious');
+      const ok = await confirmDialog({
+        title: 'Submit this rating?',
+        body: `<p style="font-size:18px;margin:0 0 12px">You are giving <strong>${esc(chosen.full_name)}</strong> ${starsHtml(stars)}</p>
+               <div class="chips">${chosenLabels.map((l) => `<span class="chip ${l.category}">${esc(l.title)}</span>`).join('')}</div>
+               ${serious ? '<p class="alert warn" style="margin:16px 0 0">You chose a serious label. Staff review these, and unsupported serious reports are flagged as possible abuse.</p>' : ''}
+               <p class="muted small" style="margin:14px 0 0">A rating can't be changed after you submit it.</p>`,
+        ok: 'Yes, submit',
+      });
+      if (!ok) return;
+
+      const btn = $('#submit');
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner"></span> Sending…';
+      try {
+        await api('/api/student/submit_rating.php', {
+          method: 'POST',
+          body: { rated_student_id: chosen.id, window_id: windowInfo.id, stars, label_ids: [...picked] },
+        });
+        showDone();
+      } catch (e) {
+        toast(e.message, 'error');
+        btn.textContent = 'Submit';
+        updateSubmit();
+      }
+    });
+
+    async function showDone() {
+      $('#step-rate').hidden = true;
+      $('#step-done').hidden = false;
+      window.scrollTo(0, 0);
+      try {
+        const [w, v] = await Promise.all([api('/api/student/voting_window.php'), api('/api/student/remaining_votes.php')]);
+        $('#done-votes').innerHTML = `${v.remaining_votes}<span class="of">/ ${v.max_votes}</span>`;
+        let left = Number(w.window.seconds_left);
+        const tick = () => { $('#done-timer').textContent = fmtCountdown(left); left -= 1; };
+        tick();
+        setInterval(tick, 1000);
+        if (v.remaining_votes === 0) {
+          $('#again').href = '/student/';
+          $('#again-text').textContent = 'Back to home';
+        }
+      } catch { /* the success itself already happened */ }
+    }
+  </script>
+</body>
+</html>

@@ -1,4 +1,3 @@
-
 <?php
 
 require_once __DIR__ . '/../../config/auth.php';
@@ -24,15 +23,26 @@ $current_user_id = $_SESSION['user_id'];
 try {
 
     $stmt = $pdo->prepare(
-        "SELECT id, full_name
-        FROM users
-        WHERE role = 'student'
-        AND status = 'active'
-        AND id != :current_user_id
-        ORDER BY full_name"
+        "SELECT u.id, u.full_name, u.username,
+            -- NEW: has the current student already rated this peer in the open window?
+            -- (lets the UI grey them out instead of failing on submit)
+            EXISTS (
+                SELECT 1 FROM ratings r
+                JOIN voting_windows w ON w.id = r.voting_window_id
+                WHERE r.voter_id = :me
+                AND r.voter_to_id = u.id
+                AND w.status = 'active'
+                AND NOW() BETWEEN w.start_time AND w.end_time
+            ) AS already_rated
+        FROM users u
+        WHERE u.role = 'student'
+        AND u.status = 'active'
+        AND u.id != :current_user_id
+        ORDER BY u.full_name"
     );
 
     $stmt->execute([
+        ':me' => $current_user_id,
         ':current_user_id' => $current_user_id
     ]);
 

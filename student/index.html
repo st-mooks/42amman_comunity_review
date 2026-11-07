@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Home · 42 Amman Peer Rating</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap">
+  <link rel="stylesheet" href="/assets/css/app.css">
+  <link rel="icon" href="/assets/img/favicon.svg">
+</head>
+<body>
+  <main id="main">
+    <section class="welcome">
+      <h2 style="font-size:48px;font-weight:400;margin:0;letter-spacing:-.02em">Welcome back, <span id="fullname" style="color:var(--green)"></span>!</h2>
+      <p class="lead">Rate your interactions with your peers and help build a better community</p>
+    </section>
+
+    <div id="notice" style="margin-top:22px"></div>
+
+    <div class="grid g3 student-cards" style="margin:34px 0 44px">
+      <div class="card rating-card">
+        <div class="stat-label">My rating <span class="info" tabindex="0" data-tip="Your average from all ratings you received (1 to 3 stars). You can't see who rated you or why: that stays private.">i</span></div>
+        <div class="row" style="gap:16px;margin-top:10px">
+          <span style="width:46px;color:var(--green)" data-icon="star"></span>
+          <div class="stat-value" id="avg"><span class="skeleton" style="display:inline-block;width:110px;height:50px"></span></div>
+        </div>
+        <div class="bar" id="avg-bar"><span style="width:0"></span></div>
+        <p class="small muted" id="avg-note" style="margin:10px 0 0"></p>
+      </div>
+      <div class="card">
+        <span class="stat-icon" style="display:block" data-icon="diamond"></span>
+        <div class="stat-label" style="margin-top:6px">Votes left</div>
+        <div class="stat-value" id="votes" style="text-align:center"><span class="skeleton" style="display:inline-block;width:110px;height:50px"></span></div>
+        <p class="small muted" id="votes-note" style="margin:6px 0 0;text-align:center"></p>
+      </div>
+      <div class="card">
+        <span class="stat-icon" style="display:block;color:var(--green)" data-icon="clock"></span>
+        <div class="stat-label" style="margin-top:6px" id="timer-label">Voting ends in</div>
+        <div class="stat-value" id="timer" style="font-weight:500"><span class="skeleton" style="display:inline-block;width:150px;height:50px"></span></div>
+        <p class="small muted" id="timer-note" style="margin:6px 0 0"></p>
+      </div>
+    </div>
+
+    <a class="hero-btn" id="rate-btn" href="/student/rate.html">
+      <span data-icon="users" style="display:flex"></span>
+      <span id="rate-text">Rate a peer</span>
+      <span class="arrow" data-icon="arrow"></span>
+    </a>
+  </main>
+
+  <script src="/assets/js/app.js"></script>
+  <script>
+    (async () => {
+      const user = await guard('student');
+      shell(user, 'home');
+      $('#fullname').textContent = user.full_name;
+
+      // My average (own rating only — the API never returns other students' data)
+      api('/api/student/my_average.php').then((d) => {
+        const avg = d.average_rating;
+        if (avg === null) {
+          $('#avg').innerHTML = '—<span class="of">/ 3</span>';
+          $('#avg-note').textContent = 'No ratings yet. Your average appears after your first rating.';
+          return;
+        }
+        $('#avg').innerHTML = `${Number(avg).toFixed(1)}<span class="of">/ 3</span>`;
+        const bar = $('#avg-bar');
+        bar.className = 'bar ' + (avg < 1.8 ? 'low' : avg < 2.4 ? 'mid' : '');
+        setTimeout(() => { $('span', bar).style.width = `${((avg - 1) / 2) * 100}%`; }, 50);
+        $('#avg-note').textContent = `Based on ${d.total_ratings} rating${d.total_ratings == 1 ? '' : 's'}.`;
+      }).catch((e) => { $('#avg').textContent = '—'; $('#avg-note').textContent = e.message; });
+
+      // Votes left + deadline
+      try {
+        const [w, v] = await Promise.all([api('/api/student/voting_window.php'), api('/api/student/remaining_votes.php')]);
+        $('#votes').innerHTML = `${v.remaining_votes}<span class="of">/ ${v.max_votes}</span>`;
+        $('#votes-note').textContent = v.submitted_votes < v.min_votes
+          ? `Please give at least ${v.min_votes} rating${v.min_votes == 1 ? '' : 's'} (${v.submitted_votes} so far).`
+          : `${v.submitted_votes} given · minimum ${v.min_votes} reached`;
+
+        let left = Number(w.window.seconds_left);
+        const tick = () => {
+          $('#timer').textContent = fmtCountdown(left);
+          if (left <= 0) { location.reload(); }
+          left -= 1;
+        };
+        tick();
+        setInterval(tick, 1000);
+        $('#timer-note').textContent = `Deadline: ${fmtDate(w.window.end_time)}`;
+
+        if (v.remaining_votes === 0) {
+          $('#rate-btn').classList.add('disabled');
+          $('#rate-text').textContent = 'All votes used';
+          $('#notice').innerHTML = '<div class="alert ok">You have used all your votes for this window. Thank you for helping the community!</div>';
+        }
+      } catch (e) {
+        // 404 = no open voting window
+        $('#votes').innerHTML = '—';
+        $('#timer-label').textContent = 'Voting is';
+        $('#timer').textContent = 'Closed';
+        $('#rate-btn').classList.add('disabled');
+        $('#notice').innerHTML = `<div class="alert warn">${e.status === 404 ? 'There is no open voting window right now. Check back when staff open the next one.' : esc(e.message)}</div>`;
+      }
+    })();
+  </script>
+</body>
+</html>

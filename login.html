@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sign in · 42 Amman Peer Rating</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap">
+  <link rel="stylesheet" href="/assets/css/app.css">
+  <link rel="icon" href="/assets/img/favicon.svg">
+</head>
+<body>
+  <div class="login">
+    <section class="login-art" aria-hidden="true">
+      <h1>Peer Rating Platform</h1>
+      <img class="logo" src="/assets/img/logo-42amman.png" alt="">
+      <p class="tagline">A Better Community For All</p>
+      <img class="wave" src="/assets/img/wave.png" alt="">
+    </section>
+
+    <section class="login-form">
+      <h2>Welcome back!</h2>
+      <p class="sub">Sign in to your account</p>
+      <div id="msg" role="alert"></div>
+      <form id="form" novalidate>
+        <label class="field"><span>Username</span>
+          <input class="input" id="username" name="username" autocomplete="username" placeholder="Enter your username" required>
+        </label>
+        <label class="field"><span>Password</span>
+          <input class="input" id="password" name="password" type="password" autocomplete="current-password" placeholder="Enter your password" required>
+        </label>
+        <button class="btn" id="submit" type="submit">Sign in</button>
+      </form>
+      <p class="demo-box">
+        <strong>Demo accounts</strong> (fictional data)<br>
+        Staff: <code>staff</code> / <code>Staff42!</code> · Student: <code>lhaddad</code> / <code>Student42!</code>
+      </p>
+    </section>
+  </div>
+
+  <script src="/assets/js/app.js"></script>
+  <script>
+    const form = $('#form');
+    const msg = $('#msg');
+    const submit = $('#submit');
+
+    // Already logged in? Go straight to the right dashboard.
+    api('/api/auth/me.php').then(({ user }) => {
+      location.replace(user.role === 'staff' ? '/staff/' : '/student/');
+    }).catch(() => {});
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      msg.innerHTML = '';
+      const username = $('#username').value.trim();
+      const password = $('#password').value;
+      if (!username || !password) {
+        msg.innerHTML = '<div class="alert error">Please enter both your username and password.</div>';
+        (!username ? $('#username') : $('#password')).focus();
+        return;
+      }
+      submit.disabled = true;
+      submit.innerHTML = '<span class="spinner"></span> Signing in…';
+      try {
+        const data = await api('/api/auth/login.php', { method: 'POST', body: { username, password } });
+        const next = new URLSearchParams(location.search).get('next');
+        const safeNext = next && next.startsWith('/' + data.role) ? next : data.redirect;
+        location.href = safeNext;
+      } catch (err) {
+        msg.innerHTML = `<div class="alert error">${esc(err.message)}</div>`;
+        submit.disabled = false;
+        submit.textContent = 'Sign in';
+        $('#password').select();
+      }
+    });
+  </script>
+</body>
+</html>

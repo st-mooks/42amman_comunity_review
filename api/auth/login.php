@@ -1,4 +1,3 @@
-
 <?php
 
 require_once __DIR__ . '/../../config/session.php';
@@ -6,15 +5,9 @@ require_once __DIR__ . '/../../config/db.php';
 
 header('Content-Type: application/json');
 
-// Check if already logged in
-if (isset($_SESSION['user_id'])) {
-    http_response_code(409);
-    echo json_encode([
-        'success' => false,
-        'message' => 'You are already logged in.'
-    ]);
-    exit();
-}
+// FIX: logging in while a session already exists used to fail with 409,
+// which locked people out if they wanted to switch account (e.g. staff demo).
+// Now a new login simply replaces the old session (session_regenerate_id below).
 
 // Allow only POST requests
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
@@ -55,7 +48,7 @@ if (empty($identifier) || empty($password)) {
 try {
     // Fetch user
     $stmt = $pdo->prepare(
-        "SELECT id, username, email, password_hash, role, status
+        "SELECT id, full_name, username, email, password_hash, role, status
         FROM users
         WHERE username = :identifier OR email = :identifier"
     );
@@ -78,12 +71,14 @@ try {
         $_SESSION['user_id'] = $user['id'];
         $_SESSION['role'] = $user['role'];
         $_SESSION['username'] = $user['username'];
+        $_SESSION['full_name'] = $user['full_name'];
 
         http_response_code(200);
         echo json_encode([
             'success' => true,
             'message' => 'Login successful.',
-            'role' => $user['role']
+            'role' => $user['role'],
+            'redirect' => $user['role'] === 'staff' ? '/staff/' : '/student/'
         ]);
         exit();
     }

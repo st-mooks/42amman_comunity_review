@@ -4,6 +4,8 @@ Students rate each other from 1 to 3 stars with labels. Staff follow participati
 
 **Live demo:** https://42rating.plainbitlabs.com
 
+> **New to web development?** Read the [Beginner's Guide](docs/BEGINNERS_GUIDE.md). It explains every part of this project from zero: the words, how a click travels from the browser to the database, every folder and table, how cheating is detected, how to run it on your own computer and how to put it online.
+
 | Role | Login | Password |
 |---|---|---|
 | Staff | `staff` | `Staff42!` |

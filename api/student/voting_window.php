@@ -36,6 +36,7 @@ try {
         FROM voting_windows
         WHERE status = 'active'
         AND NOW() BETWEEN start_time AND end_time
+        ORDER BY id DESC
         LIMIT 1"
     );
 

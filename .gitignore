@@ -1,0 +1,16 @@
+# This is a Local config & secrets (for each user alone)
+config/config.local.php
+
+# curl cookie jars and scratch files in the repo root
+/*.txt
+cookies/
+
+#OS and editor junk (useless files)
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.log
+*.swp
+*.swo
+*~
